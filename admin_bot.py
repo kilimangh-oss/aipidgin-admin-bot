@@ -23,7 +23,7 @@ def ensure_users_table():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        '''
+        """
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
@@ -35,7 +35,7 @@ def ensure_users_table():
             trader_id TEXT,
             click_id TEXT
         )
-        '''
+        """
     )
     conn.commit()
     conn.close()
@@ -128,22 +128,6 @@ def build_users_keyboard(offset: int, has_more: bool) -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text='🔙 В меню', callback_data='admin:menu')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-async def restricted(func):
-    async def wrapper(message_or_call, *args, **kwargs):
-        user_id = None
-        if isinstance(message_or_call, Message):
-            user_id = message_or_call.from_user.id
-        elif isinstance(message_or_call, CallbackQuery):
-            user_id = message_or_call.from_user.id
-        if user_id != ADMIN_ID:
-            if isinstance(message_or_call, Message):
-                await message_or_call.reply('Access denied.')
-            else:
-                await message_or_call.answer('Access denied.', show_alert=True)
-            return
-        return await func(message_or_call, *args, **kwargs)
-    return wrapper
-
 async def on_start(message: Message):
     if message.from_user.id != ADMIN_ID:
         await message.reply('Доступ запрещён.')
@@ -158,7 +142,7 @@ async def cmd_stats(message: Message):
     text = (
         f"Всего пользователей: {total}\n"
         f"Зарегистрировано: {registered}\n"
-        f"Сделали депозит: {deposited}\n"
+        f"С депозитом: {deposited}\n"
         f"Сумма депозитов: {total_deposits}"
     )
     await message.reply(text)
@@ -174,7 +158,7 @@ async def show_users_page(message_or_call, offset: int):
     text_lines = []
     for r in rows:
         text_lines.append(
-            f"ID: {r['user_id']} | @{r['username'] or '—'} | Регистрация: {'✅' if r['registered'] else '❌'} | Депозит: {'✅' if r.get('deposit_confirmed', 0) else '❌'}"
+            f"ID: {r['user_id']} | @{r['username'] or '—'} | Зарегистрирован: {'✅' if r['registered'] else '❌'} | Депозит: {'✅' if r.get('deposit_confirmed', 0) else '❌'}"
         )
     has_more = len(rows) == 10
     text = '\n'.join(text_lines) if text_lines else 'Пользователи не найдены.'
@@ -216,47 +200,45 @@ async def cmd_search(message: Message):
         await message.reply('Доступ запрещён.')
         return
     await message.answer('Введите user_id или username для поиска:')
-    message.bot.search_waiting = message.from_user.id
 
 async def cmd_broadcast(message: Message):
     if message.from_user.id != ADMIN_ID:
         await message.reply('Доступ запрещён.')
         return
     await message.answer('Введите текст для рассылки всем пользователям:')
-    message.bot.broadcast_waiting = message.from_user.id
 
 async def cmd_confirm_reg(message: Message):
     if message.from_user.id != ADMIN_ID:
-        await message.reply('Access denied.')
+        await message.reply('Доступ запрещён.')
         return
     parts = message.text.split()
     if len(parts) != 2:
-        await message.reply('Usage: /confirm_reg <user_id>')
+        await message.reply('Использование: /confirm_reg <user_id>')
         return
     try:
         uid = int(parts[1])
     except ValueError:
-        await message.reply('Invalid user id.')
+        await message.reply('Некорректный user_id.')
         return
     ok = confirm_registration(uid)
-    await message.reply('Confirmed.' if ok else 'User not found or already confirmed.')
+    await message.reply('Регистрация подтверждена.' if ok else 'Пользователь не найден или уже подтверждён.')
 
 async def cmd_confirm_dep(message: Message):
     if message.from_user.id != ADMIN_ID:
-        await message.reply('Access denied.')
+        await message.reply('Доступ запрещён.')
         return
     parts = message.text.split()
     if len(parts) != 3:
-        await message.reply('Usage: /confirm_dep <user_id> <amount>')
+        await message.reply('Использование: /confirm_dep <user_id> <сумма>')
         return
     try:
         uid = int(parts[1])
         amt = float(parts[2])
     except ValueError:
-        await message.reply('Invalid args.')
+        await message.reply('Некорректные аргументы.')
         return
     ok = confirm_deposit(uid, amt)
-    await message.reply('Deposit confirmed.' if ok else 'User not found or update failed.')
+    await message.reply('Депозит подтверждён.' if ok else 'Пользователь не найден или ошибка обновления.')
 
 async def on_callback(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID:
@@ -268,7 +250,7 @@ async def on_callback(call: CallbackQuery):
         text = (
             f"Всего пользователей: {total}\n"
             f"Зарегистрировано: {registered}\n"
-            f"Сделали депозит: {deposited}\n"
+            f"С депозитом: {deposited}\n"
             f"Сумма депозитов: {total_deposits}"
         )
         await call.message.edit_text(text, reply_markup=build_admin_menu())
@@ -280,10 +262,8 @@ async def on_callback(call: CallbackQuery):
         await show_users_page(call, offset)
     elif data.startswith('admin:search'):
         await call.message.edit_text('Введите user_id или username для поиска:', reply_markup=build_admin_menu())
-        call.bot.search_waiting = call.from_user.id
     elif data.startswith('admin:broadcast'):
         await call.message.edit_text('Введите текст для рассылки всем пользователям:', reply_markup=build_admin_menu())
-        call.bot.broadcast_waiting = call.from_user.id
     elif data.startswith('admin:settings'):
         await call.message.edit_text('Настройки (заглушка):\n\nПока здесь ничего нет.', reply_markup=build_admin_menu())
     elif data.startswith('admin:menu'):
@@ -299,10 +279,6 @@ def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
-    # State for search and broadcast
-    bot.search_waiting = None
-    bot.broadcast_waiting = None
-
     dp.message.register(on_start, Command(commands=['start']))
     dp.message.register(cmd_stats, Command(commands=['stats']))
     dp.message.register(cmd_users, Command(commands=['users']))
@@ -313,36 +289,6 @@ def main():
     dp.message.register(cmd_confirm_dep, Command(commands=['confirm_dep']))
     dp.callback_query.register(on_callback)
 
-    @dp.message()
-    async def handle_text(message: Message):
-        # Search user flow
-        if bot.search_waiting == message.from_user.id:
-            bot.search_waiting = None
-            await show_user_card(message, message.text.strip())
-            await message.answer('Админ-меню:', reply_markup=build_admin_menu())
-            return
-        # Broadcast flow
-        if bot.broadcast_waiting == message.from_user.id:
-            bot.broadcast_waiting = None
-            text = message.text
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute('SELECT user_id FROM users')
-            rows = cur.fetchall()
-            conn.close()
-            success = 0
-            failed = 0
-            for r in rows:
-                uid = r['user_id']
-                try:
-                    await bot.send_message(uid, text)
-                    success += 1
-                except Exception:
-                    failed += 1
-            await message.reply(f'Рассылка завершена. Успешно: {success}, Ошибок: {failed}')
-            await message.answer('Админ-меню:', reply_markup=build_admin_menu())
-            return
-
     async def _run():
         try:
             await dp.start_polling(bot)
@@ -350,3 +296,6 @@ def main():
             await bot.session.close()
 
     asyncio.run(_run())
+
+if __name__ == '__main__':
+    main()
