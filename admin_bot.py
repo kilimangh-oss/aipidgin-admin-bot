@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import sqlite3
+from datetime import datetime
 from typing import List, Tuple, Optional
 
 from aiogram import Bot, Dispatcher, types
@@ -14,12 +15,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ====== ТОЛЬКО ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ======
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN не найден! Укажите его в переменных окружения.")
+# =========================================
+
 DB_PATH = os.getenv('USERS_DB', '../users.db')
 ADMIN_ID = 8444406750
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-WEBHOOK_PATH = '/webhook'
-WEBHOOK_PORT = 8080
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -112,12 +115,14 @@ def confirm_registration(user_id: int) -> bool:
 def confirm_deposit(user_id: int, amount: float) -> bool:
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute('UPDATE users SET deposit_confirmed=1, deposit_amount=?, deposit_date=CURRENT_TIMESTAMP WHERE user_id=?', (amount, user_id))
+    cur.execute('UPDATE users SET deposit_confirmed=1, deposit_amount=?, deposit_date=? WHERE user_id=?', 
+                (amount, datetime.now().isoformat(), user_id))
     conn.commit()
     updated = cur.rowcount
     conn.close()
     return updated > 0
 
+# ==================== KEYBOARDS ====================
 def build_admin_menu() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='📊 Статистика', callback_data='admin:stats')],
@@ -144,12 +149,14 @@ def build_users_keyboard(offset: int, has_more: bool) -> InlineKeyboardMarkup:
 async def is_admin(user_id):
     return user_id == ADMIN_ID
 
-async def on_start(message: Message):
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
     if not await is_admin(message.from_user.id):
         await message.reply('Доступ запрещён.')
         return
     await message.answer('Админ-меню:', reply_markup=build_admin_menu())
 
+@dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     if not await is_admin(message.from_user.id):
         await message.reply('Доступ запрещён.')
@@ -163,6 +170,7 @@ async def cmd_stats(message: Message):
     )
     await message.reply(text)
 
+@dp.message(Command("users"))
 async def cmd_users(message: Message):
     if not await is_admin(message.from_user.id):
         await message.reply('Доступ запрещён.')
@@ -183,6 +191,7 @@ async def show_users_page(message_or_call, offset: int):
     else:
         await message_or_call.message.edit_text(text, reply_markup=build_users_keyboard(offset, has_more))
 
+@dp.message(Command("user"))
 async def cmd_user(message: Message):
     if not await is_admin(message.from_user.id):
         await message.reply('Доступ запрещён.')
@@ -208,18 +217,21 @@ async def cmd_user(message: Message):
     txt.append(f"Click ID: {row['click_id'] or '—'}")
     await message.reply('\n'.join(txt))
 
+@dp.message(Command("search"))
 async def cmd_search(message: Message):
     if not await is_admin(message.from_user.id):
         await message.reply('Доступ запрещён.')
         return
     await message.answer('Введите user_id или username для поиска:')
 
+@dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     if not await is_admin(message.from_user.id):
         await message.reply('Доступ запрещён.')
         return
     await message.answer('Введите текст для рассылки всем пользователям:')
 
+@dp.message(Command("confirm_reg"))
 async def cmd_confirm_reg(message: Message):
     if not await is_admin(message.from_user.id):
         await message.reply('Доступ запрещён.')
@@ -236,6 +248,7 @@ async def cmd_confirm_reg(message: Message):
     ok = confirm_registration(uid)
     await message.reply('Регистрация подтверждена.' if ok else 'Пользователь не найден или уже подтверждён.')
 
+@dp.message(Command("confirm_dep"))
 async def cmd_confirm_dep(message: Message):
     if not await is_admin(message.from_user.id):
         await message.reply('Доступ запрещён.')
@@ -253,6 +266,7 @@ async def cmd_confirm_dep(message: Message):
     ok = confirm_deposit(uid, amt)
     await message.reply('Депозит подтверждён.' if ok else 'Пользователь не найден или ошибка обновления.')
 
+@dp.callback_query()
 async def on_callback(call: CallbackQuery):
     if not await is_admin(call.from_user.id):
         await call.answer('Доступ запрещён.', show_alert=True)
@@ -284,41 +298,10 @@ async def on_callback(call: CallbackQuery):
     else:
         await call.answer()
 
-# ==================== WEBHOOK SETUP ====================
-async def on_startup():
-    if WEBHOOK_URL:
-        webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-        await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-        print(f"✅ Admin webhook установлен на {webhook_url}")
-    else:
-        print("⚠️ WEBHOOK_URL не задан, бот работает в режиме polling")
-
-async def on_shutdown():
-    await bot.delete_webhook()
-    print("👋 Admin webhook удалён")
-
 async def main():
     ensure_users_table()
-    if not BOT_TOKEN:
-        print('Пожалуйста, укажите BOT_TOKEN в .env или переменных среды')
-        return
-
-    dp.message.register(on_start, Command(commands=['start']))
-    dp.message.register(cmd_stats, Command(commands=['stats']))
-    dp.message.register(cmd_users, Command(commands=['users']))
-    dp.message.register(cmd_user, Command(commands=['user']))
-    dp.message.register(cmd_search, Command(commands=['search']))
-    dp.message.register(cmd_broadcast, Command(commands=['broadcast']))
-    dp.message.register(cmd_confirm_reg, Command(commands=['confirm_reg']))
-    dp.message.register(cmd_confirm_dep, Command(commands=['confirm_dep']))
-    dp.callback_query.register(on_callback)
-
-    print("🚀 Admin бот запускается...")
-    if WEBHOOK_URL:
-        await on_startup()
-        await dp.start_polling(bot, on_startup=on_startup, on_shutdown=on_shutdown)
-    else:
-        await dp.start_polling(bot)
+    print("🚀 Admin бот запускается в режиме polling...")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
