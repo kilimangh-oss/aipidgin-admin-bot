@@ -1,2 +1,6 @@
+<<<<<<< HEAD
 aiogram==3.25.0
+=======
+aiogram==3.25.0
+>>>>>>> a380bdbc38c9d77587f388474d6ba9a2dfc96991
 python-dotenv
